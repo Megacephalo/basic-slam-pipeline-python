@@ -86,9 +86,6 @@ if __name__=='__main__':
                 # Scan-to-scan
                 prev_cloud = voxelized_cloud
 
-                # Scan-to-map
-                # prev_cloud = voxelized_cloud
-
                 map_manager.append_frame_cloud(voxelized_cloud)
 
                 viz.draw_frame_cloud(voxelized_cloud, trajectory, frame_idx)
@@ -108,9 +105,6 @@ if __name__=='__main__':
 
             # scan-to-scan
             prev_cloud = voxelized_cloud
-
-            # scan-to=map
-            # prev_cloud = map_manager.numpy_global_map()
 
             viz.draw_frame_cloud(frame_cloud, trajectory, frame_idx)
 
