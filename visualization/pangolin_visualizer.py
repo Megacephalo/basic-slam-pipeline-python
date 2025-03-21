@@ -34,8 +34,13 @@ class Pangolin_visualizer:
 
         # Define Projection and initial ModelView matrix
         self.scam = pangolin.OpenGlRenderState(
-            pangolin.ProjectionMatrix(WINDOW_WIDTH, WINDOW_HEIGHT, 420, 420, 320, 240, 0.1, 1000),
-            pangolin.ModelViewLookAt(0, 0, 20, 0, 0, 0, pangolin.AxisDirection.AxisY)
+            pangolin.ProjectionMatrix(
+                WINDOW_WIDTH, WINDOW_HEIGHT, 
+                WINDOW_WIDTH/2, WINDOW_HEIGHT/2,  # Principal point at center of window
+                WINDOW_WIDTH/2, WINDOW_HEIGHT/2,  # Center of the window
+                0.1, 1000
+            ),
+            pangolin.ModelViewLookAt(0, 0, 10, 0, 0, 0, pangolin.AxisDirection.AxisY)
         )
         self.handler = pangolin.Handler3D(self.scam)
 
@@ -51,6 +56,59 @@ class Pangolin_visualizer:
             )
             .SetHandler(self.handler)
         )
+
+        # Store the last user-adjusted view
+        self._user_view_matrix: np.ndarray = None
+    
+    def _update_camera_position(self, current_frame_pose:np.ndarray, follow_mode: bool=True)->None:
+        """
+        Update the camera position to follow the current frame's pose.
+        
+        Args:
+            current_frame_pose: The current frame's pose matrix (4x4 SE3 transformation)
+            follow_mode: If True, follow the camera pose; if False, keep user view
+        """
+        # If follow_mode is disabled or user has adjusted the view, preserve their view
+        if not follow_mode and self._user_view_matrix is not None:
+            self._scam.SetModelViewMatrix(self._user_view_matrix)
+            return
+    
+        # Extract camera position from the pose
+        cam_pos = current_frame_pose[:3, 3]  # Translation component
+        
+        # Extract camera orientation
+        cam_forward = -current_frame_pose[:3, 2]  # Negative Z-axis of the camera
+        cam_up = -current_frame_pose[:3, 1]       # Negative Y-axis of the camera
+        
+        # Calculate the look-at point (5 units in front of the camera)
+        look_at_point = cam_pos + 5 * cam_forward
+        
+        # Position the visualization camera slightly above the actual camera
+        view_pos = cam_pos + np.array([0, 0, 100])  # 100 units above
+        
+        # Update the OpenGL camera state
+        self.scam.SetModelViewMatrix(
+            pangolin.ModelViewLookAt(
+                view_pos[0], view_pos[1], view_pos[2],      # Camera position
+                look_at_point[0], look_at_point[1], look_at_point[2],  # Look-at point
+                cam_up[0], cam_up[1], cam_up[2]             # Up vector
+            )
+        )
+    
+    # Add a method to capture user interactions
+    def _check_user_interaction(self):
+        """
+        Check if user has manually adjusted the view, and if so, store their view.
+        Call this method before updating with new frame data.
+        """
+        # Get the current model view matrix
+        current_view = self.scam.GetModelViewMatrix()
+        
+        # Check if view has been changed by user input
+        if self.handler.HasBeenDisplaced():
+            self.user_view_matrix = current_view
+            return True
+        return False
     
     def _add_origin_axes(self)->None:
         gl.glLineWidth(1)
@@ -111,9 +169,9 @@ class Pangolin_visualizer:
             gl.glVertex3f(point[0], point[1], point[2])
         gl.glEnd()
 
-    def _draw_poses(self, poses:np.ndarray)->None:
+    def _draw_poses(self, poses:np.ndarray, color: List[float]=GREEN)->None:
         gl.glLineWidth(2)
-        gl.glColor3f(*GREEN)
+        gl.glColor3f(*color)
         gl.glBegin(gl.GL_LINE_STRIP)
         for pose in poses:
             # Extract the translation part of the pose
@@ -121,30 +179,12 @@ class Pangolin_visualizer:
             gl.glVertex3f(p[0], p[1], p[2])
         gl.glEnd()
 
-    def draw_global_map(self, global_map: np.ndarray, trajectory:list[np.ndarray], up_to_indx:int)->None:
-        if up_to_indx > len(trajectory) or up_to_indx < 0:
-            raise ValueError(f'Invalid up_to_indx: {up_to_indx}')
-
+    def draw_frame_cloud(self, pointcloud: np.ndarray, trajectory:list[np.ndarray], at_idx: int=-1, gt_poses: List[np.ndarray]=None)->None:
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
-        self.dcam.Activate(self.scam)
-
-        # Draw the origin axes
-        self._add_origin_axes()
-
-        # Draw the global map
-        self._draw_pointcloud(global_map)
-
-        # Draw the trajectory
-        if len(trajectory) > 0:
-            self._draw_camera_pose(trajectory[up_to_indx])
-            self._draw_poses(trajectory[:up_to_indx])
-
-        # Finish the frame
-        pangolin.FinishFrame()
-        sleep(0.1)
-
-    def draw_frame_cloud(self, pointcloud: np.ndarray, trajectory:list[np.ndarray], at_idx: int=-1)->None:
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+        # Check if user has interacted with the view
+        # user_interacted = self._check_user_interaction()
+        # Update camera position, respecting user interactions if follow_mode is False
+        self._update_camera_position(trajectory[at_idx])
         self.dcam.Activate(self.scam)
 
         # Draw the origin axes
@@ -187,6 +227,9 @@ class Pangolin_visualizer:
 
         while not pangolin.ShouldQuit():
             gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+            # Check if user has interacted with the view
+            # user_interacted = self._check_user_interaction()
+            self._update_camera_position(trajectory[up_to_idx])
             self.dcam.Activate(self.scam)
 
             # Draw the origin axes
