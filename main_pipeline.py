@@ -3,7 +3,6 @@
 import numpy as np
 import argparse
 from pathlib import Path
-import time
 
 # Dataset parsing
 from data_processing.data_parser_interface import Data_Parser_Interface
@@ -18,13 +17,20 @@ from scan_matching.global_map_manager import Global_map_manager
 
 # visualizers
 from visualization.open3d_visualizer import PointCloudVisualizer
-from visualization.pangolin_visualizer import Pangolin_visualizer
+from visualization.pangolin_visualizer import Pangolin_visualizer, RED
+
+# Metriccs and evaluation
+from metrics_and_evaluation.load_in_ground_truth import Load_Ground_Truth
+from metrics_and_evaluation.save_to_files import save_to_csv, save_to_pcd
 
 def parse_arguments()->argparse.Namespace:
     parser = argparse.ArgumentParser(prog=f'{Path(__file__).stem}', description='A simple tool to showcase SLAM pipeline from input dataset')
     parser.add_argument('-i', '--input_dataset', required=True, type=str, help='The KITTI dataset directory')
+    parser.add_argument('-g', '--ground_truth', type=str, help='The ground truth poses file')
     parser.add_argument('-u', '--up_to_frame', type=int, default=-1, help='Specify up to which point cloud frame to run the pipeline')
     parser.add_argument('-v', '--voxel_size', type=float, default=0.5, help='The voxel size for downsampling the point cloud')
+    parser.add_argument('-sm', '--save_map_to', type=str, help='Save the generated map to the specified PCD file')
+    parser.add_argument('-st', '--save_trajectory_to', type=str, help='Save the generated trajectory to the specified CSV file')
     return parser.parse_args()
 
 if __name__=='__main__':
@@ -45,6 +51,22 @@ if __name__=='__main__':
 
     print(50 * '-')
     print(f'Reading dataset from {args.input_dataset}')
+    if args.ground_truth is not None:
+        print(f'Ground truth poses are loaded from {args.ground_truth}')
+
+        gt_loader = Load_Ground_Truth(poses_file=args.ground_truth)
+        ground_truth_poses = gt_loader.load_ground_truth()
+        if ground_truth_poses is None:
+            print('Failed to load the ground truth poses')
+        else:
+            print(f'Loaded {len(ground_truth_poses)} ground truth poses')
+
+    if args.save_map_to is not None:
+        print(f'Trajectory will be saved to {args.save_map_to}')
+    
+    if args.save_trajectory_to is not None:
+        print(f'Trajectory will be saved to {args.save_trajectory_to}')
+
     print(f'There are in total {len(bin_files)} point cloud files')
     if args.up_to_frame > 0:
         print(f'Running the pipeline up to frame {args.up_to_frame}')
@@ -71,7 +93,6 @@ if __name__=='__main__':
     prev_cloud: np.ndarray = None
 
     map_manager = Global_map_manager()
-    # map_manager._voxel_size = args.voxel_size
 
     viz = Pangolin_visualizer()
 
@@ -79,6 +100,8 @@ if __name__=='__main__':
         for frame_idx, cloud in enumerate(clouds):
             print(f'Processing frame {frame_idx + 1}...')
             voxelized_cloud = voxelize_cloud(cloud[:, :3], args.voxel_size)
+
+            ground_truth_poses = None if args.ground_truth is None else ground_truth_poses
 
             if frame_idx == 0:
                 scan_matcher.set_target(voxelized_cloud)
@@ -88,7 +111,7 @@ if __name__=='__main__':
 
                 map_manager.append_frame_cloud(voxelized_cloud)
 
-                viz.draw_frame_cloud(voxelized_cloud, trajectory, frame_idx)
+                viz.draw_frame_cloud(pointcloud=voxelized_cloud, trajectory=trajectory, at_idx=frame_idx, gt_poses=ground_truth_poses)
 
                 map_manager.append_frame_cloud(voxelized_cloud)
                 continue
@@ -106,15 +129,26 @@ if __name__=='__main__':
             # scan-to-scan
             prev_cloud = voxelized_cloud
 
-            viz.draw_frame_cloud(frame_cloud, trajectory, frame_idx)
+            viz.draw_frame_cloud(pointcloud=frame_cloud, trajectory=trajectory, at_idx=frame_idx, gt_poses=ground_truth_poses)
 
     except Exception as err:
         print(f'Error: {err}')
     
     # Visualize the global map
     print('Visualizing the global map...')
-    viz.hold_on_one_frame(map_manager.numpy_global_map(), trajectory, len(trajectory) - 1)
-    # print('Done')
+    viz.hold_on_one_frame(map_manager.numpy_global_map(), trajectory, len(trajectory) - 1, gt_poses=ground_truth_poses)
+
+    if args.save_map_to is not None:
+        print('Save to PCD file...')
+        save_to_pcd(map_manager.numpy_global_map(), file_path=Path(args.save_map_to))
+        print(f'Successfully saved the map to {args.save_map_to}')
+    
+    if args.save_trajectory_to is not None:
+        print('Save trajectory to CSV file...')
+        save_to_csv(np.array(trajectory), file_path=Path(args.save_trajectory_to))
+        print(f'Successfully saved the trajectory to {args.save_trajectory_to}')
+        
+    print('Done')
         
 
 
