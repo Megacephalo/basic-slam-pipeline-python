@@ -1,4 +1,3 @@
 numpy
 open3d
-textual
 small_gicp
