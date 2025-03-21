@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from typing import List
 import numpy as np
 import OpenGL.GL as gl
 import pypangolin as pangolin
@@ -196,11 +197,15 @@ class Pangolin_visualizer:
         if len(trajectory) > 0:
             self._draw_camera_pose(trajectory[at_idx])
             self._draw_poses(trajectory[:at_idx])
+        
+        # Draw ground truth poses
+        if gt_poses is not None and len(gt_poses) > 0:
+            self._draw_poses(gt_poses[:at_idx], color=RED)
 
         pangolin.FinishFrame()
         # sleep(0.1)
 
-    def hold_on_one_frame(self, pointcloud: np.ndarray, trajectory: list[np.ndarray], at_idx: int)->None:
+    def hold_on_one_frame(self, pointcloud: np.ndarray, trajectory: list[np.ndarray], at_idx: int, gt_poses: List[np.ndarray]=None)->None:
         while not pangolin.ShouldQuit():
             gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
             self.dcam.Activate(self.scam)
@@ -215,6 +220,10 @@ class Pangolin_visualizer:
             if len(trajectory) > 0:
                 self._draw_camera_pose(trajectory[at_idx])
                 self._draw_poses(trajectory[:at_idx])
+            
+            # Draw ground truth poses
+            if gt_poses is not None and len(gt_poses) > 0:
+                self._draw_poses(gt_poses[:at_idx], color=RED)
 
             # Finish the frame
             pangolin.FinishFrame()
