@@ -45,3 +45,6 @@ class Small_gicp(Scan_matcher_interface):
         self._target_state = (downsampled, kd_tree)
 
         return self._T_world_lidar
+
+    def get_final_transformation(self)->np.ndarray:
+        return self._T_world_lidar
