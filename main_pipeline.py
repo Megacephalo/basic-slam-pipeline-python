@@ -3,6 +3,7 @@
 import numpy as np
 import argparse
 from pathlib import Path
+from tqdm import tqdm
 
 # Dataset parsing
 from data_processing.data_parser_interface import Data_Parser_Interface
@@ -14,6 +15,10 @@ from data_processing.coordinate_transformations import voxelize_cloud, transform
 from scan_matching.small_gicp import Small_gicp
 from scan_matching.my_gicp import My_GICP
 from scan_matching.global_map_manager import Global_map_manager
+
+# Pose graph optimization
+from utils.coordinate_transformations import transformation_amtrix_to_xyzypr
+from pose_graph.pose_graph_manager import Pose_graph_Manager
 
 # visualizers
 from visualization.open3d_visualizer import PointCloudVisualizer
@@ -93,18 +98,22 @@ if __name__=='__main__':
     prev_cloud: np.ndarray = None
 
     map_manager = Global_map_manager()
+    pg_manager = Pose_graph_Manager()
 
     viz = Pangolin_visualizer()
 
     try:
-        for frame_idx, cloud in enumerate(clouds):
-            print(f'Processing frame {frame_idx + 1}...')
+        for frame_idx, cloud in tqdm( enumerate(clouds), 
+                                      desc='Processing frames', 
+                                      unit='frame', 
+                                      total=len(clouds) ):
             voxelized_cloud = voxelize_cloud(cloud[:, :3], args.voxel_size)
 
             ground_truth_poses = None if args.ground_truth is None else ground_truth_poses
 
             if frame_idx == 0:
                 scan_matcher.set_target(voxelized_cloud)
+                pg_manager.add_prior_pose(T_world_lidar)
 
                 # Scan-to-scan
                 prev_cloud = voxelized_cloud
@@ -120,11 +129,11 @@ if __name__=='__main__':
             scan_matcher.set_target(prev_cloud)
             T_world_lidar = scan_matcher.estimate()
 
+            pg_manager.add_odom_optimizeretry_measurement(trajectory[-1], T_world_lidar)
+
             trajectory.append(T_world_lidar)
 
             frame_cloud = transform_cloud(voxelized_cloud[:, :3], T_world_lidar)
-            
-            map_manager.append_frame_cloud(frame_cloud)
 
             # scan-to-scan
             prev_cloud = voxelized_cloud
@@ -134,9 +143,30 @@ if __name__=='__main__':
     except Exception as err:
         print(f'Error: {err}')
     
+
+    # Do one global trajectory optimization
+    print(50 * '*')
+    print('Optimizing the trajectory...')
+    print(50 * '*')
+    optimized_trajectory = pg_manager.optimize()
+    if optimized_trajectory is None:
+        print('No optimized trajectory found')
+        optimized_trajectory = trajectory
+        print('Using the original trajectory')
+    else:
+        for (curr_T, raw_cloud) in tqdm(list(zip(optimized_trajectory, clouds)), 
+                                        desc='Optimizing trajectory', 
+                                        unit='frame'):
+            # voxelized_cloud = voxelize_cloud(raw_cloud[:, :3], args.voxel_size)
+            # frame_cloud = transform_cloud(voxelized_cloud[:, :3], curr_T)
+            frame_cloud = transform_cloud(raw_cloud[:, :3], curr_T)
+            map_manager.append_frame_cloud(frame_cloud)
+        print('Optimized trajectory:')
+    print(50 * '-')
+
     # Visualize the global map
     print('Visualizing the global map...')
-    viz.hold_on_one_frame(map_manager.numpy_global_map(), trajectory, len(trajectory) - 1, gt_poses=ground_truth_poses)
+    viz.hold_on_one_frame(map_manager.numpy_global_map(), optimized_trajectory, len(optimized_trajectory) - 1, gt_poses=ground_truth_poses)
 
     if args.save_map_to is not None:
         print('Save to PCD file...')
@@ -145,7 +175,7 @@ if __name__=='__main__':
     
     if args.save_trajectory_to is not None:
         print('Save trajectory to CSV file...')
-        save_to_csv(np.array(trajectory), file_path=Path(args.save_trajectory_to))
+        save_to_csv(np.array(optimized_trajectory), file_path=Path(args.save_trajectory_to))
         print(f'Successfully saved the trajectory to {args.save_trajectory_to}')
         
     print('Done')
